@@ -1,0 +1,576 @@
+/*Initial Setup: Displays a message indicating the start of the Alia embed.
+    Creates a style element for an iframe to be injected at the bottom of the page.*/
+ 
+ console.log("Alia embed");
+
+    const aliaStyle = document.createElement("style");
+    aliaStyle.innerHTML = `
+      .alia-iframe {
+        position: fixed;
+        bottom: 12px;
+        z-index: 99999;
+        border: none;
+        height: 1px; /** to start, will get resized **/
+        transition-property: bottom;
+        transition-duration: 300ms;
+      }
+    `;
+    document.head.appendChild(aliaStyle);
+
+    let hasInited = false;
+
+/* Constants: Defines various constants such as backend URL, iframe ID, shop URL, and JWT headers.  */
+    
+
+    const BACKEND_URL = "https://backend.alia-cloudflare.com";
+    const IFRAME_ID = "alia-iframe";
+    const SHOP_URL = "ja0bsa-pw.myshopify.com";
+    const IS_MOBILE_HEADER = "x-alia-is-mobile";
+    const JWT_HEADER = "x-alia-jwt";
+    const ALIA_JWT_KEY = "alia-jwt";
+
+
+/* Helper Functions: These functions handle various tasks such as getting the current URL, 
+    saving and retrieving JWTs, and checking if the user is on a mobile device.
+   ChatGPT = JWT Management: Functions to save, retrieve, and clear a JWT (JSON Web Token) from 
+   local storage.
+*/
+
+
+    function saveAliaJWT(jwt) {
+      localStorage.setItem(ALIA_JWT_KEY, jwt);
+    }
+    function getAliaJWT() {
+      return localStorage.getItem(ALIA_JWT_KEY);
+    }
+    function clearAliaJWT() {
+      localStorage.removeItem(ALIA_JWT_KEY);
+    }
+
+
+
+/* Initial Data Fetch: getAliaInit function constructs a request to fetch initial data 
+for the widget from the backend, including user information like IP address and user agent.
+It handles parameters based on the device dimensions and URL. */
+
+
+    async function getAliaInit(shopURL, customerID, showByDefault) {
+      const url = new URL(BACKEND_URL);
+      url.pathname = "/user/users/init";
+
+      // verify request params
+      url.searchParams.append("shop", shopURL);
+      url.searchParams.append("shopify_customer_id", customerID);
+      const ipAddress = await aliaGetIPAddress();
+      if (ipAddress) {
+        url.searchParams.append("ip_address", ipAddress);
+      }
+      const userAgent = navigator.userAgent;
+      if (userAgent) {
+        url.searchParams.append("user_agent", userAgent);
+      }
+
+      // customer app params
+      url.searchParams.append(
+        "width",
+        Math.min(window.innerWidth, window.outerWidth)
+      );
+      url.searchParams.append("height", window.innerHeight);
+      url.searchParams.append("path", window.location.pathname + location.search);
+      if (showByDefault) url.searchParams.append("initial_state", "maximized");
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          [JWT_HEADER]: getAliaJWT(),
+          [IS_MOBILE_HEADER]: aliaIsMobile() ? "true" : "false",
+        },
+      });
+      if (response.ok) {
+        const newJWT = response.headers.get(JWT_HEADER);
+        if (newJWT) {
+          saveAliaJWT(response.headers.get(JWT_HEADER));
+        }
+        return await response.json();
+      }
+    }
+    async function aliaGetIPAddress() {
+      try {
+        const response = await fetch("https://api.ipify.org");
+        if (response.status !== 200) return undefined;
+        return await response.text();
+      } catch (e) {
+        return undefined;
+      }
+    }
+
+    /*  Widget Creation:
+    createAliaWidget (125) sets up the iframe on the webpage, ensuring it is created only once.
+    initAlia (144) initializes the widget based on the response from the server.    */
+
+    function injectRewardText(formatStr, rewardText) {
+      return str
+        .replace("{{ discount }}", discountText.toLowerCase())
+        .replace("{{discount}}", discountText.toLowerCase())
+        .replace("{{ Discount }}", capitalize(discountText))
+        .replace("{{Discount}}", capitalize(discountText))
+        .replace("{{ DISCOUNT }}", discountText.toUpperCase())
+        .replace("{{DISCOUNT}}", discountText.toUpperCase());
+    }
+
+    function aliaIsMobile() {
+      return window.innerWidth < 800;
+    }
+
+    let hasCreatedWidget = false;
+    function createAliaWidget(src) {
+      if (hasCreatedWidget) return;
+      hasCreatedWidget = true;
+      const iframe = document.createElement("iframe");
+      iframe.src = src;
+      iframe.className = "alia-iframe";
+      iframe.id = IFRAME_ID;
+      iframe.title = "Alia rewards";
+      iframe.allow = "clipboard-write";
+      document.body.appendChild(iframe);
+    }
+    function getWidget() {
+      const iframe = document.getElementById(IFRAME_ID);
+      if (!iframe) {
+        throw new Error("Alia iframe not found");
+      }
+      return iframe;
+    }
+
+    async function initAlia() {
+      const params = new URLSearchParams(window.location.search);
+      const showByDefault = params.get("alia") === "1";
+      const initResponse = await getAliaInit(SHOP_URL, "", showByDefault);
+      if (initResponse?.enabled) {
+        handleAliaIframeMessages();
+        createAliaWidget(initResponse.customerAppUrl);
+        if (initResponse.popupUrl) {
+          createAliaPopup(initResponse.popupUrl);
+        }
+        window.ALIA_INITIAL_DATA = initResponse.initialData;
+      } else {
+        console.log("Alia disabled", initResponse?.reason);
+      }
+    }
+
+    // to address a weird bug where init was getting called before some scripts loaded
+    async function tryInitAlia(remainingTries = 3) {
+      if (aliaIsBot()) {
+        console.log("Alia init disabled for bot", navigator.userAgent);
+        return;
+      }
+      if (remainingTries <= 0) {
+        console.log("Alia init failed after 3 tries");
+        return;
+      }
+      try {
+        await initAlia();
+      } catch (e) {
+        console.log("Alia init failed, trying again...", e);
+        setTimeout(() => {
+          tryInitAlia(remainingTries - 1);
+        }, 2000);
+      }
+    }
+    const ALIA_BOT_USER_AGENTS = [
+      "Googlebot",
+      "bingbot",
+      "facebookexternalhit",
+      "Storebot-Google",
+      "AmazonProductDiscovery",
+      "Petalbot",
+      "Pinterestbot",
+      "Applebot",
+    ];
+    function aliaIsBot() {
+      const agent = navigator.userAgent;
+      return ALIA_BOT_USER_AGENTS.some((bot) => agent.includes(bot));
+    }
+
+    if (document.readyState !== "loading") {
+      tryInitAlia();
+    } else {
+      document.addEventListener("DOMContentLoaded", tryInitAlia, { once: true });
+    }
+
+    /**
+     * OUTBOUND MESSAGES --------------------------------
+     * Event Handling: A mechanism to handle messages between the iframe and the main window, including resizing the iframe, 
+       handling redirects, applying discount codes, and user identification.
+     */
+
+    function openAlia() {
+      const iframe = getWidget();
+      iframe.contentWindow.postMessage(
+        {
+          type: "open",
+        },
+        "*"
+      );
+    }
+    function resetAliaWidget() {
+      const iframe = getWidget();
+      iframe.contentWindow.postMessage({ type: "reset" }, "*");
+    }
+
+    /**
+     * INBOUND MESSAGES --------------------------------
+     */
+    function aliaHandleSetStyle(classNames, styles) {
+      const iframe = getWidget();
+      if (classNames) {
+        iframe.classList.add(...classNames);
+      }
+      if (styles) {
+        Object.keys(styles).forEach((key) => {
+          iframe.style[key] = styles[key];
+        });
+      }
+    }
+
+    function handleResize(width, height) {
+      const iframe = getWidget();
+      const newHeight = Math.min(height, window.innerHeight);
+      const newWidth = Math.min(width, window.innerWidth);
+      iframe.style.height = newHeight + "px";
+      iframe.style.width = newWidth + "px";
+    }
+
+    function aliaHandleRedirect(path) {
+      if (path.startsWith("/")) {
+        path = path.substring(1);
+      }
+      if (window.Shopify) {
+        window.location.href = window.Shopify.routes.root + path;
+      } else { 
+        window.location.href = "/" + path;
+      }
+    }
+
+    function aliaHandleApplyCode(code) {
+      fetch("/discount/" + code);
+    }
+
+    function aliaHandleIdentified({ profile, hook, properties }) {
+      const { name, email, phone, smsOptIn } = profile;
+      if (window.klaviyo) {
+        window.klaviyo.identify({
+          email,
+          first_name: name,
+          phone_number: phone,
+        });
+      }
+      if (window.attentive) {
+        window.attentive.analytics.identify({
+          phone,
+          email,
+        });
+      }
+      if (window.postscript) {
+        window.postscript.identify({
+          phone,
+        });
+      }
+      if (window.omnisend) {
+        window.omnisend.identifyContact({
+          email,
+          phone,
+        });
+      }
+      if (window.Shopify && window.Shopify.analytics) {
+        window.Shopify.analytics.publish("yotpo_identify_customer", {
+          phone,
+          email,
+        });
+      }
+      if (window.onetext && !!phone && smsOptIn !== false) {
+        window.onetext.optin.submit({
+          email,
+          phone,
+          customerProperties: properties,
+        });
+      }
+      if (window.smsbump) {
+        smsbump
+          .identify({
+            phone,
+            email,
+          })
+          .then();
+      }
+      if (hook && typeof hook === "string") {
+        try {
+          eval(hook);
+        } catch (e) {
+          console.log("Error in Alia onSignup hook", e);
+        }
+      }
+    }
+
+    function aliaHandleEval(id, code) {
+      const result = eval(code);
+      const iframe = getWidget();
+      iframe.contentWindow.postMessage(
+        {
+          type: "evalResponse",
+          id,
+          result,
+        },
+        "*"
+      );
+    }
+
+    function handleAliaIframeMessages() {
+      window.addEventListener("message", function (event) {
+        if (typeof event.data !== "object") return;
+        if (event.data.type === "resize") {
+          handleResize(event.data.width, event.data.height);
+        } else if (event.data.type === "setStyle") {
+          aliaHandleSetStyle(event.data.classNames, event.data.styles);
+        } else if (event.data.type === "redirect") {
+          aliaHandleRedirect(event.data.path);
+        } else if (event.data.type === "applyCode") {
+          aliaHandleApplyCode(event.data.code);
+        } else if (event.data.type === "identified") {
+          aliaHandleIdentified(event.data);
+        } else if (event.data.type === "reset") {
+          aliaPopup?.reset();
+        } else if (event.data.type === "eval") {
+          aliaHandleEval(event.data.id, event.data.code);
+        }
+      });
+    }
+
+    /**
+     * POPUP --------------------------------
+     * Creates a popup that serves as an additional interface for the Alia rewards program, 
+       which includes an iframe for the popup content.
+     */
+    let aliaPopup;
+    function createAliaPopup(url) {
+      if (aliaPopup) {
+        console.error("AliaPopup already created");
+        return;
+      }
+      aliaPopup = new AliaPopup(url);
+      const params = new URLSearchParams(window.location.search);
+      const popupParam = params.get("alia_popup");
+      if (popupParam === "1") {
+        aliaPopup.messages.open();
+      }
+    }
+
+    class AliaPopup {
+      constructor(url) {
+        const { div, iframe } = this.buildPopup(url);
+        this.div = div;
+        this.iframe = iframe;
+        this.messages = new AliaPopupMessages(this);
+      }
+
+      buildPopup(url) {
+        const div = document.createElement("div");
+        div.style.position = "fixed";
+        div.style.display = "none";
+        document.body.appendChild(div);
+
+        const iframe = document.createElement("iframe");
+        iframe.src = url;
+        iframe.allow = "clipboard-write";
+        iframe.title = "Alia popup";
+        iframe.style.border = "none";
+        iframe.style.width = "100%";
+        iframe.style.height = "100%";
+        div.appendChild(iframe);
+
+        return { div, iframe };
+      }
+
+      setVisible(visible) {
+        if (visible) {
+          this.div.style.display = "block";
+        } else {
+          this.div.style.display = "none";
+          document.body.style.removeProperty("overflow");
+        }
+      }
+
+      setFrameStyles(modal, bodyStyles, styles) {
+        if (modal) {
+          this.iframe.contentWindow.focus();
+          this.div.setAttribute("aria-modal", "true");
+          this.div.setAttribute("role", "dialog");
+          this.div.setAttribute("aria-label", "Alia popup");
+        } else {
+          this.div.setAttribute("aria-modal", "false");
+          this.div.removeAttribute("role");
+          this.div.removeAttribute("aria-label");
+        }
+        for (const [key, value] of Object.entries(styles)) {
+          if (value === undefined) {
+            this.div.style.removeProperty(key);
+          } else {
+            this.div.style[key] = value;
+          }
+        }
+        for (const [key, value] of Object.entries(bodyStyles)) {
+          if (value === undefined) {
+            document.body.style.removeProperty(key);
+          } else {
+            document.body.style[key] = value;
+          }
+        }
+      }
+
+      reset() {
+        this.messages.reset();
+      }
+    }
+
+    class AliaPopupMessages {
+      /**
+       * @type {AliaPopup}
+       */
+      popup;
+      PREFIX = "alia.popup";
+      readyToReceive = false;
+      msgBuffer = [];
+
+      constructor(popup) {
+        this.popup = popup;
+        document.addEventListener("mouseleave", () => this.exitIntent());
+        this.createAliaIdleInterval((seconds) => this.idle(seconds));
+        this.createScrollUpHandler(() => this.scrollUp());
+        this.createScrollDepthHandler((depth) => this.scrollDepth(depth));
+        this.handleMessages();
+        window.addEventListener("resize", () =>
+          this.resize(window.innerWidth, window.innerHeight)
+        );
+      }
+
+      getMessageType(type) {
+        return this.PREFIX + "." + type;
+      }
+
+      createAliaIdleInterval(callback) {
+        let start = Date.now();
+        const reset = () => (start = Date.now());
+        this.resetIdleTimeout = reset;
+
+        document.addEventListener("mousemove", reset);
+        document.addEventListener("scroll", reset);
+        document.addEventListener("touchstart", reset);
+
+        setInterval(() => {
+          const seconds = Math.round((Date.now() - start) / 1000);
+          callback(seconds);
+        }, 1000);
+      }
+
+      createScrollUpHandler(callback) {
+        let lastScrollTop = window.scrollY;
+        setInterval(() => {
+          const delta = window.scrollY - lastScrollTop;
+          lastScrollTop = window.scrollY;
+          if (delta < -500) {
+            callback();
+          }
+        }, 200);
+      }
+
+      createScrollDepthHandler(callback) {
+        let lastScrollTop = window.scrollY;
+        window.addEventListener("scroll", () => {
+          const delta = window.scrollY - lastScrollTop;
+          lastScrollTop = window.scrollY;
+          if (delta < 0) return; // don't trigger on scroll up
+          const scrollableHeight = document.body.scrollHeight - window.innerHeight;
+          const depth = window.scrollY / scrollableHeight * 100;
+          callback(depth);
+        });
+      }
+
+      handleMessages() {
+        window.addEventListener("message", (event) => {
+          if (typeof event.data !== "object") return;
+          if (event.data.type === this.getMessageType("setVisible")) {
+            this.popup.setVisible(event.data.visible);
+          } else if (event.data.type === this.getMessageType("setFrameStyles")) {
+            this.popup.setFrameStyles(event.data.modal, event.data.bodyStyles, event.data.styles);
+          } else if (event.data.type === this.getMessageType("reset")) {
+            resetAliaWidget();
+          } else if (event.data.type === this.getMessageType("eval")) {
+            this.handleEval(event.data.id, event.data.code);
+          } else if (event.data.type === this.getMessageType("setGroundData")) {
+            this.setGroundData(event.data.data);
+          } else if (event.data.type === this.getMessageType("blackCrowEvent")) {
+            this.handleBlackCrowEvent(event.data.event);
+          } else if (event.data.type === this.getMessageType("readyToReceive")) {
+            this.handleReadyToReceive();
+          }
+        });
+      }
+
+      setGroundData(data) {
+        localStorage.setItem("alia-popup-ground", JSON.stringify(data));
+      }
+
+      handleBlackCrowEvent(event) {
+        window.blackcrow = window.blackcrow || [];
+        window.blackcrow.push(event);
+      }
+
+      handleEval(id, code) {
+        const result = eval(code);
+        this.postMessage({ type: "evalResponse", id, result });
+      }
+
+      handleReadyToReceive() {
+        if (this.readyToReceive) return;
+        this.readyToReceive = true;
+        this.msgBuffer.forEach((msg) => this.postMessage(msg));
+      }
+
+      postMessage(msg) {
+        if (!this.readyToReceive) {
+          this.msgBuffer.push(msg);
+          return;
+        }
+        this.popup.iframe.contentWindow?.postMessage(
+          {
+            ...msg,
+            type: this.getMessageType(msg.type),
+          },
+          "*"
+        );
+      }
+      open() {
+        this.postMessage({ type: "open" });
+      }
+      exitIntent() {
+        this.postMessage({ type: "exitIntent" });
+      }
+      addToCart() {
+        this.postMessage({ type: "addToCart" });
+      }
+      idle(seconds) {
+        this.postMessage({ type: "idle", seconds });
+      }
+      scrollUp() {
+        this.postMessage({ type: "scrollUp" });
+      }
+      scrollDepth(depth) {
+        this.postMessage({ type: "scrollDepth", depth });
+      }
+      reset() {
+        this.postMessage({ type: "reset" });
+      }
+      resize(width, height) {
+        this.postMessage({ type: "resize", width, height });
+      }
+    }
+  

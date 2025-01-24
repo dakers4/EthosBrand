@@ -1,0 +1,175 @@
+// Step 1: Setup
+console.log("EthosBrand Widget");
+
+const widgetStyle = document.createElement("style");
+widgetStyle.innerHTML = `
+  .ethos-iframe {
+    position: fixed;
+    bottom: 12px;
+    z-index: 99999;
+    border: none;
+    height: 1px; 
+    transition: bottom 600ms ease-in-out;
+  }
+`;
+
+document.head.appendChild(widgetStyle);
+
+// Step 2: Define Constants
+const BACKEND_URL = "https://your-backend.com";  // alias was using cloudflare, need to patch
+const IFRAME_ID = "ethos-iframe";
+const STORE_URL = "your-store.myshopify.com"; //what is aviator nations store name?
+const JWT_HEADER = "x-ethos-jwt";
+const ETHOS_JWT_KEY = "ethos-jwt";
+
+// Step 3: JWT Management
+
+
+function saveJWT(jwt) {
+  localStorage.setItem(ETHOS_JWT_KEY, jwt);
+}
+function getJWT() {
+  return localStorage.getItem(ETHOS_JWT_KEY);
+}
+function clearJWT() {
+  localStorage.removeItem(ETHOS_JWT_KEY);
+}
+
+
+
+// Step 4: Create Your Widget Function
+async function initializeWidget(shopURL, customerID, showByDefault) {
+  // Fetching data logic here, similar to getAliaInit
+    const url = new URL(BACKEND_URL);
+    url.pathname = "/user/users/init";
+
+    const params = {
+      store_url: shopURL,
+      customer_id: customerID,
+      default: showByDefault
+    };
+
+
+
+
+
+
+
+}
+
+
+
+// Step 5: Create Widget & Inject into Document
+function createWidget(src) {
+  const iframe = document.createElement("iframe");
+  iframe.src = src;
+  iframe.className = "ethos-iframe";
+  iframe.id = IFRAME_ID;
+  document.body.appendChild(iframe);
+}
+
+
+
+// Step 6: Set Up Message Handling
+function handleMessages() {
+  window.addEventListener("message", function(event) {
+    // Handle messages from the iframe
+  });
+}
+
+// Step 7: Initialize on Load
+if (document.readyState !== "loading") {
+  initializeWidget();
+} else {
+  document.addEventListener("DOMContentLoaded", initializeWidget);
+}
+
+// Step 8: Define Event Functions (like resize, redirect, etc.)
+function resizeWidget(width, height) {
+  const iframe = document.getElementById(IFRAME_ID);
+  iframe.style.height = height + "px";
+  iframe.style.width = width + "px";
+}
+
+/* 
+
+Next Steps: 
+
+Customize the constants to match your backend and design needs.
+
+Implement the data fetching logic similar to getAliaInit to gather necessary information.
+
+Design your specific message handling logic in handleMessages according to the functionalities you need in your widget.
+
+These integrations are used to help synchronize user data across different marketing platforms, enhancing customer communication and engagement.
+
+
+Here’s a template for integrating Klaviyo, Postscript, and Shopify Analytics in a similar manner to what you provided in the code snippet. 
+You can use this as a starting point for your application:
+
+Template for Integrations
+javascript
+Copy*/
+/**
+ * Integrations for Klaviyo, Postscript, and Shopify Analytics
+ */
+
+/**
+ * Integrate with Klaviyo
+ * @param {Object} profile - User profile data
+ */
+function integrateKlaviyo(profile) {
+    if (window.klaviyo) {
+        window.klaviyo.identify({
+            email: profile.email || '',
+            first_name: profile.name || '',
+            phone_number: profile.phone || ''
+        });
+    }
+}
+
+/**
+ * Integrate with Postscript
+ * @param {Object} profile - User profile data
+ */
+function integratePostscript(profile) {
+    if (window.postscript) {
+        window.postscript.identify({
+            phone: profile.phone || '',
+            email: profile.email || ''
+        });
+    }
+}
+
+/**
+ * Integrate with Shopify Analytics
+ * @param {Object} profile - User profile data
+ */
+function integrateShopifyAnalytics(profile) {
+    if (window.Shopify && window.Shopify.analytics) {
+        window.Shopify.analytics.publish("yotpo_identify_customer", {
+            email: profile.email || '',
+            phone: profile.phone || ''
+        });
+    }
+}
+
+/**
+ * Main function to handle user identification
+ * @param {Object} userProfile - User profile data that includes name, email, and phone
+ */
+function handleUserIdentification(userProfile) {
+    integrateKlaviyo(userProfile);
+    integratePostscript(userProfile);
+    integrateShopifyAnalytics(userProfile);
+}
+
+// Example user profile to pass to the integration functions
+const userProfile = {
+    name: "John Doe",
+    email: "john.doe@example.com",
+    phone: "+1234567890"
+};
+
+// Call the main identification handler
+handleUserIdentification(userProfile);
